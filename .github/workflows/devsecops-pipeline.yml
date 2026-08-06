@@ -11,27 +11,24 @@ on:
 
 jobs:
   security-scan:
-    name: Gitleaks Secret Scan
+    name: Gitleaks Full History Scan
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
 
     steps:
-      - name: Checkout repository (full history)
+      - name: Checkout repository with full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Verify full Git history
-        run: git log --oneline --all | head -20
-
       - name: Install Gitleaks
-        run: |
-          wget -qO- https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(uname -s)_x64.tar.gz | tar -xz
-          sudo mv gitleaks /usr/local/bin/
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          install-only: true
 
-      - name: Scan entire Git history
+      - name: Scan full Git history
         run: |
           gitleaks git \
             --config .gitleaks.toml \
@@ -39,7 +36,7 @@ jobs:
             --report-format json \
             --report-path gitleaks-report.json
 
-      - name: Upload report
+      - name: Upload Gitleaks Report
         if: always()
         uses: actions/upload-artifact@v4
         with:

@@ -1,16 +1,42 @@
 title = "SecureFlow Custom Rules"
 
+# Custom Flask SECRET_KEY detection
 [[rules]]
 id = "flask-secret-key"
-description = "Detect Flask SECRET_KEY"
-regex = '''SECRET_KEY\s*=\s*['"][^'"]+['"]'''
-keywords = ["SECRET_KEY"]
+description = "Detect Flask SECRET_KEY values"
+regex = '''(?i)SECRET_KEY\s*=\s*["'][^"']+["']'''
+keywords = [
+  "SECRET_KEY"
+]
+entropy = 3.5
 
+# PostgreSQL database URL detection
 [[rules]]
-id = "database-url"
-description = "Detect PostgreSQL connection string"
-regex = '''postgres(ql)?://[^[:space:]'"]+'''
+id = "postgres-connection-string"
+description = "Detect PostgreSQL connection strings"
+regex = '''(?i)(postgres|postgresql)://[^[:space:]]+'''
 keywords = [
   "postgres://",
   "postgresql://"
+]
+entropy = 3.0
+
+# Generic database password detection
+[[rules]]
+id = "database-password"
+description = "Detect database passwords"
+regex = '''(?i)(DB_PASSWORD|DATABASE_PASSWORD|POSTGRES_PASSWORD)\s*=\s*["']?[^"'\s]+'''
+keywords = [
+  "DB_PASSWORD",
+  "DATABASE_PASSWORD",
+  "POSTGRES_PASSWORD"
+]
+entropy = 2.5
+
+# Ignore common non-secret locations
+[allowlist]
+paths = [
+  '''\.git/''',
+  '''node_modules/''',
+  '''venv/'''
 ]
