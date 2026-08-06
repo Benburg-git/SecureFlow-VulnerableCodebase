@@ -1,42 +1,18 @@
-title = "SecureFlow Custom Rules"
-
-# Custom Flask SECRET_KEY detection
+title = "SecureFlow custom Gitleaks rules"
 [[rules]]
 id = "flask-secret-key"
-description = "Detect Flask SECRET_KEY values"
-regex = '''(?i)SECRET_KEY\s*=\s*["'][^"']+["']'''
-keywords = [
-  "SECRET_KEY"
-]
-entropy = 3.5
-
-# PostgreSQL database URL detection
+description = "Flask SECRET_KEY / JWT_SECRET / SESSION_SECRET assigned as a literal value"
+regex = '''(?i)(SECRET_KEY|JWT_SECRET|SESSION_SECRET)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{4,}['"]?'''
+tags = ["flask", "secret", "hardcoded"]
 [[rules]]
 id = "postgres-connection-string"
-description = "Detect PostgreSQL connection strings"
-regex = '''(?i)(postgres|postgresql)://[^[:space:]]+'''
-keywords = [
-  "postgres://",
-  "postgresql://"
-]
-entropy = 3.0
-
-# Generic database password detection
+description = "Hardcoded PostgreSQL password assignment"
+regex = '''(?i)(POSTGRES_PASSWORD|DB_PASSWORD)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{4,}['"]?'''
+tags = ["database", "secret", "hardcoded"]
 [[rules]]
-id = "database-password"
-description = "Detect database passwords"
-regex = '''(?i)(DB_PASSWORD|DATABASE_PASSWORD|POSTGRES_PASSWORD)\s*=\s*["']?[^"'\s]+'''
-keywords = [
-  "DB_PASSWORD",
-  "DATABASE_PASSWORD",
-  "POSTGRES_PASSWORD"
-]
-entropy = 2.5
-
-# Ignore common non-secret locations
-[allowlist]
-paths = [
-  '''\.git/''',
-  '''node_modules/''',
-  '''venv/'''
-]
+id = "postgres-uri"
+description = "Full PostgreSQL connection URI with embedded credentials"
+regex = '''postgres(?:ql)?:\/\/[^:\s]+:[^@\s]+@[^\/\s]+'''
+tags = ["database", "connection-string"]
+[extend]
+useDefault = true
