@@ -18,21 +18,30 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          args: detect --log-opts="--all" --report-format json --report-path gitleaks-report.json
+      - name: Verify full Git history
+        run: git log --oneline --all | head -20
 
-      - name: Upload Gitleaks Report
+      - name: Install Gitleaks
+        run: |
+          wget -qO- https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(uname -s)_x64.tar.gz | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Scan entire Git history
+        run: |
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts="--all" \
+            --report-format json \
+            --report-path gitleaks-report.json
+
+      - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-report
           path: gitleaks-report.json
-
-  
