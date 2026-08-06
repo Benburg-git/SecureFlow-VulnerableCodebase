@@ -1,18 +1,33 @@
 title = "SecureFlow custom Gitleaks rules"
+
+[extend]
+useDefault = true
+
 [[rules]]
 id = "flask-secret-key"
 description = "Flask SECRET_KEY / JWT_SECRET / SESSION_SECRET assigned as a literal value"
 regex = '''(?i)(SECRET_KEY|JWT_SECRET|SESSION_SECRET)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{4,}['"]?'''
-tags = ["flask", "secret", "hardcoded"]
+tags = [
+  "flask",
+  "secret",
+  "hardcoded"
+]
+
 [[rules]]
 id = "postgres-connection-string"
 description = "Hardcoded PostgreSQL password assignment"
 regex = '''(?i)(POSTGRES_PASSWORD|DB_PASSWORD)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{4,}['"]?'''
-tags = ["database", "secret", "hardcoded"]
+tags = [
+  "database",
+  "secret",
+  "hardcoded"
+]
+
 [[rules]]
 id = "postgres-uri"
 description = "Full PostgreSQL connection URI with embedded credentials"
-regex = '''postgres(?:ql)?:\/\/[^:\s]+:[^@\s]+@[^\/\s]+'''
-tags = ["database", "connection-string"]
-[extend]
-useDefault = true
+regex = '''(?i)postgres(?:ql)?:\/\/[^:\s]+:[^@\s]+@[^\/\s]+'''
+tags = [
+  "database",
+  "connection-string"
+]
