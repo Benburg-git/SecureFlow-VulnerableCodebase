@@ -1,0 +1,16 @@
+title = "SecureFlow Custom Rules"
+
+[[rules]]
+id = "flask-secret-key"
+description = "Detect Flask SECRET_KEY"
+regex = '''SECRET_KEY\s*=\s*['"][^'"]+['"]'''
+keywords = ["SECRET_KEY"]
+
+[[rules]]
+id = "database-url"
+description = "Detect PostgreSQL connection string"
+regex = '''postgres(ql)?://[^[:space:]'"]+'''
+keywords = [
+  "postgres://",
+  "postgresql://"
+]

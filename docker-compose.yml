@@ -7,7 +7,7 @@
 #   IV-07  no network segmentation between services
 #   CK-03  postgres:14 used without digest pinning
 
-version: "3.8"
+
 
 services:
   auth-db:
