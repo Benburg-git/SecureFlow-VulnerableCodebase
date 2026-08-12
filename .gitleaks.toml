@@ -30,4 +30,3 @@ description = "Detect hardcoded database connection URLs containing credentials"
 regex = '''(?i)(DATABASE_URL|DB_URL|DATABASE_URI|DB_URI)\s*[:=]\s*['"]?(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?)://[^'"\s]+['"]?'''
 keywords = ["DATABASE_URL", "DB_URL", "DATABASE_URI", "DB_URI"]
 tags = ["database", "connection-string", "credential"]
-```
