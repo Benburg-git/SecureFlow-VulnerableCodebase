@@ -6,27 +6,23 @@ useDefault = true
 [[rules]]
 id = "flask-secret-key"
 description = "Detect hardcoded Flask SECRET_KEY, JWT_SECRET, or SESSION_SECRET values"
-regex = '''(?i)(SECRET_KEY|JWT_SECRET|SESSION_SECRET)\s*[:=]\s*['"]?[A-Za-z0-9_\-./+=]{4,}['"]?'''
-keywords = ["SECRET_KEY", "JWT_SECRET", "SESSION_SECRET"]
+regex = '''(?i)(SECRET_KEY|JWT_SECRET|SESSION_SECRET)\s*[:=]\s*['"]?[A-Za-z0-9_./+=-]{4,}['"]?'''
 tags = ["flask", "secret", "hardcoded"]
 
 [[rules]]
 id = "postgres-password"
 description = "Detect hardcoded PostgreSQL database passwords"
 regex = '''(?i)(DB_PASSWORD|DATABASE_PASSWORD|POSTGRES_PASSWORD|PGPASSWORD)\s*[:=]\s*['"]?[^\s'"]{4,}['"]?'''
-keywords = ["DB_PASSWORD", "DATABASE_PASSWORD", "POSTGRES_PASSWORD", "PGPASSWORD"]
 tags = ["database", "postgresql", "password"]
 
 [[rules]]
 id = "postgres-connection-string"
 description = "Detect PostgreSQL connection strings containing embedded credentials"
-regex = '''(?i)postgres(?:ql)?://[^:\s'"]+:[^@\s'"]+@[^/\s'"]+(?:/[^?\s'"]*)?(?:\?[^\s'"]*)?'''
-keywords = ["postgres://", "postgresql://"]
+regex = '''(?i)postgres(ql)?://[^:\s'"]+:[^@\s'"]+@[^/\s'"]+(/[^\s?'"]*)?(\?[^\s'"]*)?'''
 tags = ["database", "postgresql", "connection-string", "credential"]
 
 [[rules]]
 id = "database-url"
 description = "Detect hardcoded database connection URLs containing credentials"
-regex = '''(?i)(DATABASE_URL|DB_URL|DATABASE_URI|DB_URI)\s*[:=]\s*['"]?(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?)://[^'"\s]+['"]?'''
-keywords = ["DATABASE_URL", "DB_URL", "DATABASE_URI", "DB_URI"]
+regex = '''(?i)(DATABASE_URL|DB_URL|DATABASE_URI|DB_URI)\s*[:=]\s*['"]?(postgres(ql)?|mysql|mariadb|mongodb(\+srv)?)://[^'"\s]+['"]?'''
 tags = ["database", "connection-string", "credential"]
