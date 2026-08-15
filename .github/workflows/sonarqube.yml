@@ -25,7 +25,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.organization=Benburg-git
+            -Dsonar.organization=benburg-git
             -Dsonar.projectKey=Benburg-git_SecureFlow-VulnerableCodebase
             -Dsonar.sources=.
 
