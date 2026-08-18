@@ -150,13 +150,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build auth-service image
-        run: docker build -t auth-service:scan ./auth-service
+        run: docker build -t auth-service:scan ./services/auth-service
 
       - name: Build transaction-service image
-        run: docker build -t transaction-service:scan ./transaction-service
+        run: docker build -t transaction-service:scan ./services/transaction-service
 
       - name: Build frontend image
-        run: docker build -t frontend:scan ./frontend
+        run: docker build -t frontend:scan ./services/frontend
 
       - name: Scan auth-service image
         uses: aquasecurity/trivy-action@v0.36.0
