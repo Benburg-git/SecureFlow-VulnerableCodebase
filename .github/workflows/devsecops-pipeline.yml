@@ -216,47 +216,41 @@ jobs:
         with:
           name: trivy-image-reports
           path: trivy-*.json
-          
-          k8s-iac-scan:
-  name: Trivy K8s Config Scan
-  runs-on: ubuntu-latest
-  if: always()
 
-  steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
+  k8s-iac-scan:
+    name: Trivy K8s Config Scan
+    runs-on: ubuntu-latest
+    if: always()
 
-    - name: Trivy config scan - Kubernetes
-      uses: aquasecurity/trivy-action@v0.36.0
-      with:
-        scan-type: config
-        scan-ref: infra/kubernetes/
-        format: json
-        output: trivy-k8s-report.json
-        severity: CRITICAL,HIGH
-        exit-code: 0
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-    - name: Evaluate K8s findings
-      run: |
-        COUNT=$(jq '[.Results[]?.Misconfigurations[]? |
-          select(.Severity=="CRITICAL" or .Severity=="HIGH")] |
-          length' trivy-k8s-report.json)
+      - name: Trivy config scan - Kubernetes
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/kubernetes/
+          format: json
+          output: trivy-k8s-report.json
+          severity: CRITICAL,HIGH
+          exit-code: 0
 
-        echo "K8s CRITICAL/HIGH misconfigurations: $COUNT"
+      - name: Evaluate K8s findings
+        run: |
+          COUNT=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | length' trivy-k8s-report.json)
+          echo "K8s CRITICAL/HIGH misconfigurations: $COUNT"
 
-        if [ "$COUNT" -gt 0 ]; then
-          echo "Hard-fail: CRITICAL/HIGH K8s misconfigurations present."
-          exit 1
-        fi
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Hard-fail: CRITICAL/HIGH K8s misconfigurations present."
+            exit 1
+          fi
 
-        echo "Security gate passed."
+          echo "K8s security gate passed."
 
-    - name: Upload K8s scan report
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: trivy-k8s-report
-        path: trivy-k8s-report.json
- 
-          
-  
+      - name: Upload K8s scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-k8s-report
+          path: trivy-k8s-report.json
