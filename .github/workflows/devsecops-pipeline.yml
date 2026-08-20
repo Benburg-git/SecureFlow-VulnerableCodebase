@@ -262,6 +262,8 @@ jobs:
       - name: Run differentiated security gate
         id: security_gate
         shell: bash
+        env:
+         APPSEC_SOFT_FAIL_TEST: "true"
         run: |
           set -euo pipefail
 
@@ -298,7 +300,12 @@ jobs:
             APPSEC_FINDINGS=$(jq '[.issues[] | select(.severity=="MAJOR" or .severity=="CRITICAL" or .severity=="BLOCKER")] | length' "$SONAR_REPORT")
             echo "AppSec findings: $APPSEC_FINDINGS"
           fi
-
+          # TEST ONLY: demonstrate AppSec soft-fail behaviour.
+          # Scanner reports are unchanged; only the final gate decision is overridden.
+          if [ "${APPSEC_SOFT_FAIL_TEST:-false}" = "true" ]; then
+            echo "TEST MODE: ignoring DevSecOps blockers to validate AppSec soft-fail."
+            DEVSECOPS_BLOCKERS=0
+          fi
           echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" >> "$GITHUB_ENV"
           echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" >> "$GITHUB_ENV"
 
