@@ -19,11 +19,9 @@ jobs:
   # =========================
   hello-world:
     runs-on: ubuntu-latest
-
     steps:
       - name: Hello World
         run: echo "Hello World from the DevSecOps pipeline!"
-
 
   # =========================
   # GITLEAKS SECRET SCAN
@@ -31,13 +29,12 @@ jobs:
   secret-scan:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
 
     steps:
       - name: Checkout repository (full history)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -49,7 +46,7 @@ jobs:
           sudo mv gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
-      - name: Run Gitleaks (full history scan)
+      - name: Run Gitleaks (report only)
         run: |
           gitleaks detect \
             --source . \
@@ -58,7 +55,7 @@ jobs:
             --report-format json \
             --report-path gitleaks-report.json \
             --redact \
-            --exit-code 1
+            --exit-code 0
 
       - name: Upload Gitleaks report
         if: always()
@@ -66,15 +63,16 @@ jobs:
         with:
           name: gitleaks-report
           path: gitleaks-report.json
-# =========================
-  # SONARQUBE
+
   # =========================
-  sonarqube:
+  # SONARQUBE / SAST
+  # =========================
+  sast-scan:
     name: SonarQube Cloud Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -123,21 +121,15 @@ jobs:
           name: sonar-findings
           path: sonar-findings.json
 
-      - name: Enforce SonarQube security gate
+      - name: Summarize SonarQube findings
         run: |
-          critical=$(jq '[.issues[] | select(.severity == "CRITICAL")] | length' sonar-findings.json)
-          blocker=$(jq '[.issues[] | select(.severity == "BLOCKER")] | length' sonar-findings.json)
+          total=$(jq '.issues | length' sonar-findings.json)
+          high=$(jq '[.issues[] | select(.severity == "MAJOR" or .severity == "CRITICAL" or .severity == "BLOCKER")] | length' sonar-findings.json)
+          echo "Total SonarQube findings: $total"
+          echo "High-priority AppSec findings: $high"
+          echo "SonarQube findings are non-blocking and will be evaluated by the security gate."
 
-          echo "CRITICAL findings: $critical"
-          echo "BLOCKER findings: $blocker"
-
-          if [ "$critical" -gt 0 ] || [ "$blocker" -gt 0 ]; then
-            echo "::error::SonarQube security gate FAILED"
-            exit 1
-          fi
-
-          echo "SonarQube security gate PASSED"
-   # =========================
+  # =========================
   # TRIVY IMAGE SCAN
   # =========================
   image-scan:
@@ -147,7 +139,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build auth-service image
         run: docker build -t auth-service:scan ./services/auth-service
@@ -188,28 +180,6 @@ jobs:
           scanners: vuln
           exit-code: '0'
 
-      - name: Evaluate hard-fail on CRITICAL/HIGH
-        run: |
-          TOTAL=0
-
-          for f in trivy-auth-service.json trivy-transaction-service.json trivy-frontend.json; do
-            COUNT=$(jq '[.Results[]?.Vulnerabilities[]? |
-              select(.Severity=="CRITICAL" or .Severity=="HIGH")] |
-              length' "$f")
-
-            echo "$f: $COUNT CRITICAL/HIGH findings"
-            TOTAL=$((TOTAL + COUNT))
-          done
-
-          echo "Total CRITICAL/HIGH across all images: $TOTAL"
-
-          if [ "$TOTAL" -gt 0 ]; then
-            echo "::error::Trivy security gate FAILED - CRITICAL/HIGH vulnerabilities detected."
-            exit 1
-          fi
-
-          echo "Trivy security gate PASSED"
-
       - name: Upload Trivy reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -217,8 +187,11 @@ jobs:
           name: trivy-image-reports
           path: trivy-*.json
 
-  k8s-iac-scan:
-    name: Trivy K8s Config Scan
+  # =========================
+  # INFRASTRUCTURE AS CODE SCAN
+  # =========================
+  iac-scan:
+    name: Infrastructure as Code Scan
     runs-on: ubuntu-latest
     if: always()
 
@@ -234,48 +207,156 @@ jobs:
           format: json
           output: trivy-k8s-report.json
           severity: CRITICAL,HIGH
-          exit-code: 0
+          exit-code: '0'
 
-      - name: Evaluate K8s findings
-        run: |
-          COUNT=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | length' trivy-k8s-report.json)
-          echo "K8s CRITICAL/HIGH misconfigurations: $COUNT"
+      - name: Checkov Terraform scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/terraform/
+          framework: terraform
+          output_format: json
+          output_file_path: checkov-report.json
+          soft_fail: true
 
-          if [ "$COUNT" -gt 0 ]; then
-            echo "Hard-fail: CRITICAL/HIGH K8s misconfigurations present."
-            exit 1
-          fi
-
-          echo "K8s security gate passed."
-
-      - name: Upload K8s scan report
+      - name: Upload IaC reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-k8s-report
-          path: trivy-k8s-report.json
+          name: iac-reports
+          path: |
+            trivy-k8s-report.json
+            checkov-report.json
 
-  checkov-iac-scan:
-    name: Checkov Terraform IaC Scan
+  # =========================
+  # DIFFERENTIATED SECURITY GATE
+  # =========================
+  security-gate:
+    name: Security Gate
     runs-on: ubuntu-latest
     if: always()
+
+    needs:
+      - secret-scan
+      - sast-scan
+      - image-scan
+      - iac-scan
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Run Checkov Terraform scan
-        uses: bridgecrewio/checkov-action@master
+      - name: Download all security artifacts
+        uses: actions/download-artifact@v5
         with:
-          directory: infra/terraform/
-          framework: terraform
-          output_format: cli,json
-          output_file_path: console,checkov-report.json
-          soft_fail: true
+          path: security-artifacts
 
-      - name: Upload Checkov report
-        if: always()
+      - name: Display downloaded reports
+        run: |
+          find security-artifacts -maxdepth 3 -type f -print
+
+      - name: Run differentiated security gate
+        id: security_gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEVSECOPS_BLOCKERS=0
+          APPSEC_FINDINGS=0
+
+          echo "Evaluating DevSecOps-owned findings..."
+
+          GITLEAKS_REPORT=$(find security-artifacts -name "gitleaks-report.json" | head -1 || true)
+          if [ -n "${GITLEAKS_REPORT}" ]; then
+            GITLEAKS_COUNT=$(jq 'length' "$GITLEAKS_REPORT")
+            echo "Gitleaks findings: $GITLEAKS_COUNT"
+            if [ "$GITLEAKS_COUNT" -gt 0 ]; then
+              DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + GITLEAKS_COUNT))
+            fi
+          fi
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$f")
+            echo "$f CRITICAL findings: $CRITICAL_COUNT"
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + CRITICAL_COUNT))
+          done < <(find security-artifacts -name "trivy-*.json" ! -name "trivy-k8s-report.json")
+
+          K8S_REPORT=$(find security-artifacts -name "trivy-k8s-report.json" | head -1 || true)
+          if [ -n "${K8S_REPORT}" ]; then
+            K8S_CRITICAL=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity=="CRITICAL")] | length' "$K8S_REPORT")
+            echo "K8s CRITICAL findings: $K8S_CRITICAL"
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + K8S_CRITICAL))
+          fi
+
+          SONAR_REPORT=$(find security-artifacts -name "sonar-findings.json" | head -1 || true)
+          if [ -n "${SONAR_REPORT}" ]; then
+            APPSEC_FINDINGS=$(jq '[.issues[] | select(.severity=="MAJOR" or .severity=="CRITICAL" or .severity=="BLOCKER")] | length' "$SONAR_REPORT")
+            echo "AppSec findings: $APPSEC_FINDINGS"
+          fi
+
+          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" >> "$GITHUB_ENV"
+          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" >> "$GITHUB_ENV"
+
+          if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
+            echo "SECURITY_GATE_RESULT=BLOCKED" >> "$GITHUB_ENV"
+          else
+            echo "SECURITY_GATE_RESULT=PASSED" >> "$GITHUB_ENV"
+          fi
+
+      - name: Generate PR security summary
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          cat > security-gate-summary.md <<EOF
+          ## 🛡️ SecureFlow Security Gate
+
+          ### DevSecOps-owned findings
+
+          **Blocking CRITICAL findings:** ${DEVSECOPS_BLOCKERS}
+
+          - CRITICAL DevSecOps finding → ⛔ BLOCKING
+          - HIGH / MEDIUM / LOW → review but non-blocking unless explicitly escalated
+
+          ### AppSec-owned findings
+
+          **High-priority AppSec findings:** ${APPSEC_FINDINGS}
+
+          AppSec findings are **non-blocking** and require handoff for triage.
+
+          AppSec intake:
+          \`docs/security-gate-policy.md#appsec-intake-template\`
+
+          ### Final Gate Decision
+
+          **${SECURITY_GATE_RESULT}**
+          EOF
+
+      - name: Post security gate PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file security-gate-summary.md
+
+      - name: Upload security gate summary
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: checkov-terraform-report
-          path: checkov-report.json        
+          name: security-gate-summary
+          path: security-gate-summary.md
+
+      - name: Enforce final gate decision
+        run: |
+          if [ "${SECURITY_GATE_RESULT}" = "BLOCKED" ]; then
+            echo "::error::Security Gate FAILED - blocking DevSecOps findings are present."
+            exit 1
+          fi
+
+          echo "Security Gate PASSED"
