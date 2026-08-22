@@ -230,7 +230,7 @@ jobs:
   # =========================
   # DIFFERENTIATED SECURITY GATE
   # =========================
-  security-gate:
+  security-gate:   
     name: Security Gate
     runs-on: ubuntu-latest
     if: always()
@@ -272,27 +272,8 @@ jobs:
 
           echo "Evaluating DevSecOps-owned findings..."
 
-          # ... keep your existing Gitleaks, Trivy and SonarQube checks here ...
-
-          # TEST ONLY: isolate AppSec soft-fail behaviour.
-          if [ "${APPSEC_SOFT_FAIL_TEST:-false}" = "true" ]; then
-            echo "TEST MODE: ignoring existing DevSecOps blockers for AppSec soft-fail validation."
-            DEVSECOPS_BLOCKERS=0
-          fi
-
-          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" >> "$GITHUB_ENV"
-          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" >> "$GITHUB_ENV"
-
-          if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
-            echo "SECURITY_GATE_RESULT=BLOCKED" >> "$GITHUB_ENV"
-          else
-            echo "SECURITY_GATE_RESULT=PASSED" >> "$GITHUB_ENV"
-          fi
-        
           # ---------------------------------
           # GITLEAKS
-          # Any detected secret is blocking.
-          # Missing report also blocks.
           # ---------------------------------
           GITLEAKS_REPORT=$(find security-artifacts \
             -name "gitleaks-report.json" \
@@ -307,17 +288,12 @@ jobs:
             echo "Gitleaks findings: $GITLEAKS_COUNT"
 
             if [ "$GITLEAKS_COUNT" -gt 0 ]; then
-              DEVSECOPS_BLOCKERS=$(
-                (DEVSECOPS_BLOCKERS + GITLEAKS_COUNT)
-              )
+              DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + GITLEAKS_COUNT))
             fi
           fi
 
           # ---------------------------------
           # TRIVY IMAGE REPORTS
-          # Block only CRITICAL findings.
-          # Supports both vulnerabilities
-          # and misconfigurations.
           # ---------------------------------
           TRIVY_REPORT_COUNT=0
 
@@ -330,23 +306,17 @@ jobs:
               [
                 .Results[]? |
                 (
-                  (
-                    .Vulnerabilities[]?
-                    | select(.Severity == "CRITICAL")
-                  ),
-                  (
-                    .Misconfigurations[]?
-                    | select(.Severity == "CRITICAL")
-                  )
+                  (.Vulnerabilities[]? |
+                    select(.Severity == "CRITICAL")),
+                  (.Misconfigurations[]? |
+                    select(.Severity == "CRITICAL"))
                 )
               ] | length
             ' "$f")
 
             echo "$f CRITICAL findings: $CRITICAL_COUNT"
 
-            DEVSECOPS_BLOCKERS=$(
-              (DEVSECOPS_BLOCKERS + CRITICAL_COUNT)
-            )
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + CRITICAL_COUNT))
 
           done < <(
             find security-artifacts \
@@ -361,7 +331,6 @@ jobs:
 
           # ---------------------------------
           # KUBERNETES / IAC TRIVY REPORT
-          # CRITICAL findings are blocking.
           # ---------------------------------
           K8S_REPORT=$(find security-artifacts \
             -name "trivy-k8s-report.json" \
@@ -371,40 +340,32 @@ jobs:
             echo "::error::Kubernetes Trivy report missing. Failing closed."
             DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
           else
-
             K8S_CRITICAL=$(jq '
               [
                 .Results[]? |
                 (
-                  (
-                    .Vulnerabilities[]?
-                    | select(.Severity == "CRITICAL")
-                  ),
-                  (
-                    .Misconfigurations[]?
-                    | select(.Severity == "CRITICAL")
-                  )
+                  (.Vulnerabilities[]? |
+                    select(.Severity == "CRITICAL")),
+                  (.Misconfigurations[]? |
+                    select(.Severity == "CRITICAL"))
                 )
               ] | length
             ' "$K8S_REPORT")
 
             echo "K8s CRITICAL findings: $K8S_CRITICAL"
 
-            DEVSECOPS_BLOCKERS=$(
-              (DEVSECOPS_BLOCKERS + K8S_CRITICAL)
-            )
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + K8S_CRITICAL))
           fi
 
           # ---------------------------------
           # SONARQUBE / APPSEC
-          # Non-blocking.
+          # Non-blocking
           # ---------------------------------
           SONAR_REPORT=$(find security-artifacts \
             -name "sonar-findings.json" \
             | head -1 || true)
 
           if [ -n "${SONAR_REPORT}" ]; then
-
             APPSEC_FINDINGS=$(jq '
               [
                 .issues[]
@@ -417,30 +378,35 @@ jobs:
             ' "$SONAR_REPORT")
 
             echo "AppSec findings: $APPSEC_FINDINGS"
-
           else
             echo "::warning::SonarQube report missing."
             echo "::warning::AppSec findings cannot be summarized."
           fi
 
           # ---------------------------------
+          # TEST ONLY
+          # Override existing DevSecOps blockers
+          # so AppSec soft-fail behaviour can
+          # be demonstrated.
+          # ---------------------------------
+          if [ "${APPSEC_SOFT_FAIL_TEST:-false}" = "true" ]; then
+            echo "TEST MODE: ignoring existing DevSecOps blockers for AppSec soft-fail validation."
+            DEVSECOPS_BLOCKERS=0
+          fi
+
+          # ---------------------------------
           # EXPORT RESULTS
           # ---------------------------------
-          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" \
-            >> "$GITHUB_ENV"
-
-          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" \
-            >> "$GITHUB_ENV"
+          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" >> "$GITHUB_ENV"
+          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" >> "$GITHUB_ENV"
 
           # ---------------------------------
           # FINAL GATE DECISION
           # ---------------------------------
           if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
-            echo "SECURITY_GATE_RESULT=BLOCKED" \
-              >> "$GITHUB_ENV"
+            echo "SECURITY_GATE_RESULT=BLOCKED" >> "$GITHUB_ENV"
           else
-            echo "SECURITY_GATE_RESULT=PASSED" \
-              >> "$GITHUB_ENV"
+            echo "SECURITY_GATE_RESULT=PASSED" >> "$GITHUB_ENV"
           fi
 
       - name: Generate PR security summary
