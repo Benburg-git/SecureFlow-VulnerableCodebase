@@ -227,258 +227,258 @@ jobs:
             trivy-k8s-report.json
             checkov-report.json
 
-# =========================
-# DIFFERENTIATED SECURITY GATE
-# =========================
-security-gate:
-  name: Security Gate
-  runs-on: ubuntu-latest
-  if: always()
+  # =========================
+  # DIFFERENTIATED SECURITY GATE
+  # =========================
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    if: always()
 
-  needs:
-    - secret-scan
-    - sast-scan
-    - image-scan
-    - iac-scan
+    needs:
+      - secret-scan
+      - sast-scan
+      - image-scan
+      - iac-scan
 
-  permissions:
-    contents: read
-    pull-requests: write
-    issues: write
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
 
-  steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-    - name: Download all security artifacts
-      uses: actions/download-artifact@v5
-      with:
-        path: security-artifacts
+      - name: Download all security artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: security-artifacts
 
-    - name: Display downloaded reports
-      run: |
-        find security-artifacts -maxdepth 3 -type f -print
+      - name: Display downloaded reports
+        run: |
+          find security-artifacts -maxdepth 3 -type f -print
 
-    - name: Run differentiated security gate
-      id: security_gate
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Run differentiated security gate
+        id: security_gate
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        DEVSECOPS_BLOCKERS=0
-        APPSEC_FINDINGS=0
+          DEVSECOPS_BLOCKERS=0
+          APPSEC_FINDINGS=0
 
-        echo "Evaluating DevSecOps-owned findings..."
+          echo "Evaluating DevSecOps-owned findings..."
 
-        # ---------------------------------
-        # GITLEAKS
-        # Any detected secret is blocking.
-        # Missing report also blocks.
-        # ---------------------------------
-        GITLEAKS_REPORT=$(find security-artifacts \
-          -name "gitleaks-report.json" \
-          | head -1 || true)
+          # ---------------------------------
+          # GITLEAKS
+          # Any detected secret is blocking.
+          # Missing report also blocks.
+          # ---------------------------------
+          GITLEAKS_REPORT=$(find security-artifacts \
+            -name "gitleaks-report.json" \
+            | head -1 || true)
 
-        if [ -z "${GITLEAKS_REPORT}" ]; then
-          echo "::error::Gitleaks report missing. Failing closed."
-          DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
-        else
-          GITLEAKS_COUNT=$(jq 'length' "$GITLEAKS_REPORT")
+          if [ -z "${GITLEAKS_REPORT}" ]; then
+            echo "::error::Gitleaks report missing. Failing closed."
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
+          else
+            GITLEAKS_COUNT=$(jq 'length' "$GITLEAKS_REPORT")
 
-          echo "Gitleaks findings: $GITLEAKS_COUNT"
+            echo "Gitleaks findings: $GITLEAKS_COUNT"
 
-          if [ "$GITLEAKS_COUNT" -gt 0 ]; then
+            if [ "$GITLEAKS_COUNT" -gt 0 ]; then
+              DEVSECOPS_BLOCKERS=$(
+                (DEVSECOPS_BLOCKERS + GITLEAKS_COUNT)
+              )
+            fi
+          fi
+
+          # ---------------------------------
+          # TRIVY IMAGE REPORTS
+          # Block only CRITICAL findings.
+          # Supports both vulnerabilities
+          # and misconfigurations.
+          # ---------------------------------
+          TRIVY_REPORT_COUNT=0
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+
+            TRIVY_REPORT_COUNT=$((TRIVY_REPORT_COUNT + 1))
+
+            CRITICAL_COUNT=$(jq '
+              [
+                .Results[]? |
+                (
+                  (
+                    .Vulnerabilities[]?
+                    | select(.Severity == "CRITICAL")
+                  ),
+                  (
+                    .Misconfigurations[]?
+                    | select(.Severity == "CRITICAL")
+                  )
+                )
+              ] | length
+            ' "$f")
+
+            echo "$f CRITICAL findings: $CRITICAL_COUNT"
+
             DEVSECOPS_BLOCKERS=$(
-              (DEVSECOPS_BLOCKERS + GITLEAKS_COUNT)
+              (DEVSECOPS_BLOCKERS + CRITICAL_COUNT)
+            )
+
+          done < <(
+            find security-artifacts \
+              -name "trivy-*.json" \
+              ! -name "trivy-k8s-report.json"
+          )
+
+          if [ "$TRIVY_REPORT_COUNT" -eq 0 ]; then
+            echo "::error::No Trivy image reports found. Failing closed."
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
+          fi
+
+          # ---------------------------------
+          # KUBERNETES / IAC TRIVY REPORT
+          # CRITICAL findings are blocking.
+          # ---------------------------------
+          K8S_REPORT=$(find security-artifacts \
+            -name "trivy-k8s-report.json" \
+            | head -1 || true)
+
+          if [ -z "${K8S_REPORT}" ]; then
+            echo "::error::Kubernetes Trivy report missing. Failing closed."
+            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
+          else
+
+            K8S_CRITICAL=$(jq '
+              [
+                .Results[]? |
+                (
+                  (
+                    .Vulnerabilities[]?
+                    | select(.Severity == "CRITICAL")
+                  ),
+                  (
+                    .Misconfigurations[]?
+                    | select(.Severity == "CRITICAL")
+                  )
+                )
+              ] | length
+            ' "$K8S_REPORT")
+
+            echo "K8s CRITICAL findings: $K8S_CRITICAL"
+
+            DEVSECOPS_BLOCKERS=$(
+              (DEVSECOPS_BLOCKERS + K8S_CRITICAL)
             )
           fi
-        fi
 
-        # ---------------------------------
-        # TRIVY IMAGE REPORTS
-        # Block only CRITICAL findings.
-        # Supports both vulnerabilities
-        # and misconfigurations.
-        # ---------------------------------
-        TRIVY_REPORT_COUNT=0
+          # ---------------------------------
+          # SONARQUBE / APPSEC
+          # Non-blocking.
+          # ---------------------------------
+          SONAR_REPORT=$(find security-artifacts \
+            -name "sonar-findings.json" \
+            | head -1 || true)
 
-        while IFS= read -r f; do
-          [ -z "$f" ] && continue
+          if [ -n "${SONAR_REPORT}" ]; then
 
-          TRIVY_REPORT_COUNT=$((TRIVY_REPORT_COUNT + 1))
+            APPSEC_FINDINGS=$(jq '
+              [
+                .issues[]
+                | select(
+                    .severity == "MAJOR"
+                    or .severity == "CRITICAL"
+                    or .severity == "BLOCKER"
+                  )
+              ] | length
+            ' "$SONAR_REPORT")
 
-          CRITICAL_COUNT=$(jq '
-            [
-              .Results[]? |
-              (
-                (
-                  .Vulnerabilities[]?
-                  | select(.Severity == "CRITICAL")
-                ),
-                (
-                  .Misconfigurations[]?
-                  | select(.Severity == "CRITICAL")
-                )
-              )
-            ] | length
-          ' "$f")
+            echo "AppSec findings: $APPSEC_FINDINGS"
 
-          echo "$f CRITICAL findings: $CRITICAL_COUNT"
+          else
+            echo "::warning::SonarQube report missing."
+            echo "::warning::AppSec findings cannot be summarized."
+          fi
 
-          DEVSECOPS_BLOCKERS=$(
-            (DEVSECOPS_BLOCKERS + CRITICAL_COUNT)
-          )
-
-        done < <(
-          find security-artifacts \
-            -name "trivy-*.json" \
-            ! -name "trivy-k8s-report.json"
-        )
-
-        if [ "$TRIVY_REPORT_COUNT" -eq 0 ]; then
-          echo "::error::No Trivy image reports found. Failing closed."
-          DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
-        fi
-
-        # ---------------------------------
-        # KUBERNETES / IAC TRIVY REPORT
-        # CRITICAL findings are blocking.
-        # ---------------------------------
-        K8S_REPORT=$(find security-artifacts \
-          -name "trivy-k8s-report.json" \
-          | head -1 || true)
-
-        if [ -z "${K8S_REPORT}" ]; then
-          echo "::error::Kubernetes Trivy report missing. Failing closed."
-          DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + 1))
-        else
-
-          K8S_CRITICAL=$(jq '
-            [
-              .Results[]? |
-              (
-                (
-                  .Vulnerabilities[]?
-                  | select(.Severity == "CRITICAL")
-                ),
-                (
-                  .Misconfigurations[]?
-                  | select(.Severity == "CRITICAL")
-                )
-              )
-            ] | length
-          ' "$K8S_REPORT")
-
-          echo "K8s CRITICAL findings: $K8S_CRITICAL"
-
-          DEVSECOPS_BLOCKERS=$(
-            (DEVSECOPS_BLOCKERS + K8S_CRITICAL)
-          )
-        fi
-
-        # ---------------------------------
-        # SONARQUBE / APPSEC
-        # Non-blocking.
-        # ---------------------------------
-        SONAR_REPORT=$(find security-artifacts \
-          -name "sonar-findings.json" \
-          | head -1 || true)
-
-        if [ -n "${SONAR_REPORT}" ]; then
-
-          APPSEC_FINDINGS=$(jq '
-            [
-              .issues[]
-              | select(
-                  .severity == "MAJOR"
-                  or .severity == "CRITICAL"
-                  or .severity == "BLOCKER"
-                )
-            ] | length
-          ' "$SONAR_REPORT")
-
-          echo "AppSec findings: $APPSEC_FINDINGS"
-
-        else
-          echo "::warning::SonarQube report missing."
-          echo "::warning::AppSec findings cannot be summarized."
-        fi
-
-        # ---------------------------------
-        # EXPORT RESULTS
-        # ---------------------------------
-        echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" \
-          >> "$GITHUB_ENV"
-
-        echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" \
-          >> "$GITHUB_ENV"
-
-        # ---------------------------------
-        # FINAL GATE DECISION
-        # ---------------------------------
-        if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
-          echo "SECURITY_GATE_RESULT=BLOCKED" \
+          # ---------------------------------
+          # EXPORT RESULTS
+          # ---------------------------------
+          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" \
             >> "$GITHUB_ENV"
-        else
-          echo "SECURITY_GATE_RESULT=PASSED" \
+
+          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" \
             >> "$GITHUB_ENV"
-        fi
 
-    - name: Generate PR security summary
-      if: github.event_name == 'pull_request'
-      shell: bash
-      run: |
-        cat > security-gate-summary.md <<EOF
-        ## 🛡️ SecureFlow Security Gate
+          # ---------------------------------
+          # FINAL GATE DECISION
+          # ---------------------------------
+          if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
+            echo "SECURITY_GATE_RESULT=BLOCKED" \
+              >> "$GITHUB_ENV"
+          else
+            echo "SECURITY_GATE_RESULT=PASSED" \
+              >> "$GITHUB_ENV"
+          fi
 
-        ### DevSecOps-owned findings
+      - name: Generate PR security summary
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          cat > security-gate-summary.md <<EOF
+          ## 🛡️ SecureFlow Security Gate
 
-        **Blocking findings:** ${DEVSECOPS_BLOCKERS}
+          ### DevSecOps-owned findings
 
-        - Confirmed secret finding → ⛔ BLOCKING
-        - CRITICAL image vulnerability → ⛔ BLOCKING
-        - CRITICAL IaC/Kubernetes finding → ⛔ BLOCKING
-        - Missing required DevSecOps scanner report → ⛔ BLOCKING
-        - HIGH / MEDIUM / LOW → review but non-blocking unless escalated
+          **Blocking findings:** ${DEVSECOPS_BLOCKERS}
 
-        ### AppSec-owned findings
+          - Confirmed secret finding → ⛔ BLOCKING
+          - CRITICAL image vulnerability → ⛔ BLOCKING
+          - CRITICAL IaC/Kubernetes finding → ⛔ BLOCKING
+          - Missing required DevSecOps scanner report → ⛔ BLOCKING
+          - HIGH / MEDIUM / LOW → review but non-blocking unless escalated
 
-        **High-priority AppSec findings:** ${APPSEC_FINDINGS}
+          ### AppSec-owned findings
 
-        SonarQube/AppSec findings are **non-blocking**.
+          **High-priority AppSec findings:** ${APPSEC_FINDINGS}
 
-        Findings must be handed to AppSec for triage.
+          SonarQube/AppSec findings are **non-blocking**.
 
-        AppSec intake:
+          Findings must be handed to AppSec for triage.
 
-        \`docs/security-gate-policy.md#appsec-intake-template\`
+          AppSec intake:
 
-        ### Final Gate Decision
+          \`docs/security-gate-policy.md#appsec-intake-template\`
 
-        **${SECURITY_GATE_RESULT}**
-        EOF
+          ### Final Gate Decision
 
-    - name: Post security gate PR comment
-      if: github.event_name == 'pull_request'
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        gh pr comment "${{ github.event.pull_request.number }}" \
-          --repo "${{ github.repository }}" \
-          --body-file security-gate-summary.md
+          **${SECURITY_GATE_RESULT}**
+          EOF
 
-    - name: Upload security gate summary
-      if: always() && github.event_name == 'pull_request'
-      uses: actions/upload-artifact@v4
-      with:
-        name: security-gate-summary
-        path: security-gate-summary.md
+      - name: Post security gate PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file security-gate-summary.md
 
-    - name: Enforce final gate decision
-      run: |
-        if [ "${SECURITY_GATE_RESULT}" = "BLOCKED" ]; then
-          echo "::error::Security Gate FAILED - blocking DevSecOps findings are present."
-          exit 1
-        fi
+      - name: Upload security gate summary
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-gate-summary
+          path: security-gate-summary.md
 
-        echo "Security Gate PASSED"
+      - name: Enforce final gate decision
+        run: |
+          if [ "${SECURITY_GATE_RESULT}" = "BLOCKED" ]; then
+            echo "::error::Security Gate FAILED - blocking DevSecOps findings are present."
+            exit 1
+          fi
+
+          echo "Security Gate PASSED"
