@@ -262,8 +262,7 @@ jobs:
       - name: Run differentiated security gate
         id: security_gate
         shell: bash
-        env:
-          APPSEC_SOFT_FAIL_TEST: "true"
+        
         run: |
           set -euo pipefail
 
@@ -381,17 +380,6 @@ jobs:
           else
             echo "::warning::SonarQube report missing."
             echo "::warning::AppSec findings cannot be summarized."
-          fi
-
-          # ---------------------------------
-          # TEST ONLY
-          # Override existing DevSecOps blockers
-          # so AppSec soft-fail behaviour can
-          # be demonstrated.
-          # ---------------------------------
-          if [ "${APPSEC_SOFT_FAIL_TEST:-false}" = "true" ]; then
-            echo "TEST MODE: ignoring existing DevSecOps blockers for AppSec soft-fail validation."
-            DEVSECOPS_BLOCKERS=0
           fi
 
           # ---------------------------------
