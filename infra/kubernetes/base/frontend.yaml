@@ -1,41 +1,78 @@
 apiVersion: apps/v1
 kind: Deployment
+
 metadata:
   name: frontend
   namespace: secureflow
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
-      svc: frontend
+      app: frontend
+
   template:
     metadata:
       labels:
-        svc: frontend
+        app: frontend
+
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "frontend-role"
+        vault.hashicorp.com/agent-inject-secret-config: "secureflow/data/frontend"
+
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secureflow/data/frontend" -}}
+          export AUTH_SERVICE_URL="{{ .Data.data.AUTH_SERVICE_URL }}"
+          export TRANSACTION_SERVICE_URL="{{ .Data.data.TRANSACTION_SERVICE_URL }}"
+          export SESSION_SECRET="{{ .Data.data.SESSION_SECRET }}"
+          {{- end }}
+
     spec:
+      serviceAccountName: frontend-sa
+
       containers:
         - name: frontend
-          image: secureflow/frontend:latest   # CK-06
+          image: secureflow/frontend:latest
+          imagePullPolicy: Never
+
           ports:
             - containerPort: 5000
+
+          command:
+            - /bin/sh
+            - -c
+
+          args:
+            - |
+              . /vault/secrets/config
+              exec python app.py
+
           envFrom:
             - configMapRef:
                 name: secureflow-config
+
           securityContext:
-            privileged: true                # CK-04
-            allowPrivilegeEscalation: true  # CK-04
-            runAsUser: 0                    # CK-02
-          # CK-05 — no resources.
+            privileged: true
+            allowPrivilegeEscalation: true
+            runAsUser: 0
+
 ---
+
 apiVersion: v1
 kind: Service
+
 metadata:
   name: frontend
   namespace: secureflow
+
 spec:
   type: NodePort
+
   selector:
-    svc: frontend
+    app: frontend
+
   ports:
     - port: 5000
       targetPort: 5000
