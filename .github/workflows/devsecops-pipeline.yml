@@ -23,7 +23,7 @@ jobs:
       - name: Hello World
         run: echo "Hello World from the DevSecOps pipeline!"
 
-  # =========================
+   # =========================
   # GITLEAKS SECRET SCAN
   # =========================
   secret-scan:
@@ -39,14 +39,31 @@ jobs:
           fetch-depth: 0
 
       - name: Install Gitleaks
+        shell: bash
         run: |
-          GITLEAKS_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d '"' -f4 | sed 's/v//')
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          set -euo pipefail
+
+          GITLEAKS_VERSION="8.28.0"
+
+          echo "Installing Gitleaks v${GITLEAKS_VERSION}..."
+
+          curl --fail --location --show-error \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output gitleaks.tar.gz
+
+          echo "Validating downloaded archive..."
+          tar -tzf gitleaks.tar.gz >/dev/null
+
+          echo "Extracting Gitleaks..."
           tar -xzf gitleaks.tar.gz gitleaks
-          sudo mv gitleaks /usr/local/bin/gitleaks
+
+          sudo install gitleaks /usr/local/bin/gitleaks
+
+          echo "Installed version:"
           gitleaks version
 
       - name: Run Gitleaks (report only)
+        shell: bash
         run: |
           gitleaks detect \
             --source . \
@@ -63,7 +80,7 @@ jobs:
         with:
           name: gitleaks-report
           path: gitleaks-report.json
-
+          if-no-files-found: warn
   # =========================
   # SONARQUBE / SAST
   # =========================
