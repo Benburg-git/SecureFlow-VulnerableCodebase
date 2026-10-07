@@ -44,12 +44,23 @@ vault policy write frontend-policy /tmp/frontend-policy.hcl
 
 echo "==> Creating Kubernetes auth roles"
 
-vault write auth/kubernetes/role/auth-service bound_service_account_names=auth-service bound_service_account_namespaces=secureflow policies=auth-service-policy ttl=1h
+vault write auth/kubernetes/role/auth-service \
+  bound_service_account_names=auth-service-sa \
+  bound_service_account_namespaces=secureflow \
+  policies=auth-service-policy \
+  ttl=1h
 
-vault write auth/kubernetes/role/transaction-service bound_service_account_names=transaction-service bound_service_account_namespaces=secureflow policies=transaction-service-policy ttl=1h
+vault write auth/kubernetes/role/transaction-service \
+  bound_service_account_names=transaction-service-sa \
+  bound_service_account_namespaces=secureflow \
+  policies=transaction-service-policy \
+  ttl=1h
 
-vault write auth/kubernetes/role/frontend bound_service_account_names=frontend bound_service_account_namespaces=secureflow policies=frontend-policy ttl=1h
-
+vault write auth/kubernetes/role/frontend \
+  bound_service_account_names=frontend-sa \
+  bound_service_account_namespaces=secureflow \
+  policies=frontend-policy \
+  ttl=1h
 echo "==> Bootstrap complete"
 
 vault list auth/kubernetes/role

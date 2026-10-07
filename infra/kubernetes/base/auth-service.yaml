@@ -19,7 +19,7 @@ spec:
 
       annotations:
         vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/role: "auth-service-role"
+        vault.hashicorp.com/role: "auth-service"
         vault.hashicorp.com/agent-inject-secret-config: "secureflow/data/auth-service"
 
         vault.hashicorp.com/agent-inject-template-config: |
@@ -57,9 +57,13 @@ spec:
                 name: secureflow-config
 
           securityContext:
-            privileged: true
-            allowPrivilegeEscalation: true
-            runAsUser: 0
+            privileged: false
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
 
 ---
 
