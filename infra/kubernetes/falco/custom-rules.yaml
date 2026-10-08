@@ -1,0 +1,55 @@
+# SecureFlow custom Falco runtime detection rules
+
+- rule: SecureFlow Shell Spawned In Container
+  desc: Detect a shell being started inside a SecureFlow container
+  condition: >
+    spawned_process
+    and container
+    and proc.name in (bash, sh, dash, zsh)
+  output: >
+    SecureFlow shell spawned in container
+    (user=%user.name
+    command=%proc.cmdline
+    container=%container.name
+    image=%container.image.repository)
+  priority: WARNING
+  tags:
+    - secureflow
+    - container
+    - shell
+
+- rule: SecureFlow Sensitive File Access
+  desc: Detect access to sensitive Linux credential files from a container
+  condition: >
+    container
+    and open_read
+    and fd.name in (/etc/shadow, /etc/gshadow)
+  output: >
+    SecureFlow sensitive file accessed
+    (user=%user.name
+    file=%fd.name
+    command=%proc.cmdline
+    container=%container.name)
+  priority: WARNING
+  tags:
+    - secureflow
+    - filesystem
+    - credentials
+
+- rule: SecureFlow Package Manager Execution
+  desc: Detect package manager execution inside a running container
+  condition: >
+    spawned_process
+    and container
+    and proc.name in (apt, apt-get, yum, dnf, apk)
+  output: >
+    SecureFlow package manager executed
+    (user=%user.name
+    command=%proc.cmdline
+    container=%container.name
+    image=%container.image.repository)
+  priority: NOTICE
+  tags:
+    - secureflow
+    - container
+    - package-management

@@ -1,55 +1,83 @@
-apiVersion: apps/v1
+﻿apiVersion: apps/v1
 kind: Deployment
+
 metadata:
   name: auth-service
   namespace: secureflow
-  # CK-07 — missing required labels.
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
-      svc: auth-service
+      app: auth-service
+
   template:
     metadata:
       labels:
-        svc: auth-service
+        app: auth-service
+
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "auth-service"
+        vault.hashicorp.com/agent-inject-secret-config: "secureflow/data/auth-service"
+
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secureflow/data/auth-service" -}}
+          export SECRET_KEY="{{ .Data.data.SECRET_KEY }}"
+          export DB_HOST="{{ .Data.data.DB_HOST }}"
+          export DB_PORT="{{ .Data.data.DB_PORT }}"
+          export DB_NAME="{{ .Data.data.DB_NAME }}"
+          export DB_USER="{{ .Data.data.DB_USER }}"
+          export DB_PASSWORD="{{ .Data.data.DB_PASSWORD }}"
+          {{- end }}
+
     spec:
+      serviceAccountName: auth-service-sa
+
       containers:
         - name: auth-service
-          # CK-06 — :latest tag.
           image: secureflow/auth-service:latest
+          imagePullPolicy: Never
+
           ports:
             - containerPort: 5001
+
+          command:
+            - /bin/sh
+            - -c
+
+          args:
+            - |
+              . /vault/secrets/config
+              exec python app.py
+
           envFrom:
             - configMapRef:
                 name: secureflow-config
-          env:
-            - name: DB_HOST
-              value: auth-db
-            - name: DB_NAME
-              value: authdb
-            - name: DB_USER
-              value: authuser
-            - name: DB_PASSWORD
-              valueFrom:
-                configMapKeyRef:
-                  name: secureflow-config
-                  key: AUTH_DB_PASSWORD
-          # CK-04 — privileged container with privilege escalation.
+
           securityContext:
-            privileged: true
-            allowPrivilegeEscalation: true
-            runAsUser: 0
-          # CK-05 — no resources.
+            privileged: false
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+
 ---
+
 apiVersion: v1
 kind: Service
+
 metadata:
   name: auth-service
   namespace: secureflow
+
 spec:
   selector:
-    svc: auth-service
+    app: auth-service
+
   ports:
     - port: 5001
       targetPort: 5001
