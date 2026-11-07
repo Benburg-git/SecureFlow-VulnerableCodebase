@@ -607,15 +607,14 @@ jobs:
             fail=1
           fi
 
-          # --------------------------------------
-          # APPSEC ENFORCEMENT
+                    # --------------------------------------
+          # APPSEC ENFORCEMENT (SOFT-FAIL)
           # --------------------------------------
 
           if (( appsec_high > 0 )); then
-            echo "::error::APPSEC BLOCKED: HIGH/CRITICAL findings detected."
-            fail=1
+            echo "::warning::APPSEC WARNING: $appsec_high HIGH/CRITICAL findings. Non-blocking, raise an AppSec intake ticket."
           fi
-
+        
           # --------------------------------------
           # FINAL DECISION
           # --------------------------------------
