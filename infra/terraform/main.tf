@@ -2,10 +2,11 @@
 # Planted vulnerabilities are tagged with their Vulnerability Index ID.
 # DO NOT `terraform apply` this against a real AWS account — Checkov should
 # block it in the pipeline. The purpose of this tree is to give interns
-# something Checkov can flag.
+# something Terraform can flag.
 
 terraform {
   required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -31,6 +32,12 @@ variable "project" {
 variable "environment" {
   type    = string
   default = "dev"
+}
+
+variable "db_password" {
+  description = "Database password supplied securely at Terraform runtime."
+  type        = string
+  sensitive   = true
 }
 
 module "vpc" {
@@ -63,5 +70,5 @@ module "rds" {
   environment       = var.environment
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
-  db_password       = "postgres" # IV-01 — hardcoded DB password reused from docker-compose.
+  db_password       = var.db_password
 }

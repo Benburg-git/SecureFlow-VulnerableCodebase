@@ -1,40 +1,81 @@
+
 #!/bin/sh
-set -e
+set -eu
+
+# Required environment variables. Never hard-code real secrets here.
+: "${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD}"
+: "${TX_DB_PASSWORD:?Set TX_DB_PASSWORD}"
+: "${SECRET_KEY:?Set SECRET_KEY}"
+: "${SESSION_SECRET:?Set SESSION_SECRET}"
+
+# Required Kubernetes service-account configuration.
+: "${KUBERNETES_PORT_443_TCP_ADDR:?Kubernetes API address is unavailable}"
+
+SA_TOKEN="/var/run/secrets/kubernetes.io/serviceaccount/token"
+SA_CA="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+if [ ! -r "$SA_TOKEN" ] || [ ! -r "$SA_CA" ]; then
+  echo "ERROR: Kubernetes service-account token or CA certificate is unavailable." >&2
+  exit 1
+fi
 
 echo "==> Enabling Kubernetes auth if needed"
-vault auth list | grep -q '^kubernetes/' || vault auth enable kubernetes
+if ! vault auth list -format=json | grep -q '"kubernetes/":'; then
+  vault auth enable kubernetes
+fi
 
 echo "==> Configuring Kubernetes auth"
-vault write auth/kubernetes/config token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443" kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+vault write auth/kubernetes/config \
+  token_reviewer_jwt=@"$SA_TOKEN" \
+  kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443" \
+  kubernetes_ca_cert=@"$SA_CA"
 
 echo "==> Enabling KV v2 secrets engine if needed"
-vault secrets list | grep -q '^secureflow/' || vault secrets enable -path=secureflow kv-v2
+if ! vault secrets list -format=json | grep -q '"secureflow/":'; then
+  vault secrets enable -path=secureflow kv-v2
+fi
 
 echo "==> Creating SecureFlow secrets"
 
-vault kv put secureflow/auth-service SECRET_KEY="changeme" DB_HOST="auth-db" DB_PORT="5432" DB_NAME="authdb" DB_USER="authuser" DB_PASSWORD="authpass123"
+vault kv put secureflow/auth-service \
+  SECRET_KEY="$SECRET_KEY" \
+  DB_HOST="auth-db" \
+  DB_PORT="5432" \
+  DB_NAME="authdb" \
+  DB_USER="authuser" \
+  DB_PASSWORD="$AUTH_DB_PASSWORD"
 
-vault kv put secureflow/transaction-service DB_HOST="transaction-db" DB_PORT="5432" DB_NAME="transactiondb" DB_USER="txuser" DB_PASSWORD="transactionpass123"
+vault kv put secureflow/transaction-service \
+  DB_HOST="transaction-db" \
+  DB_PORT="5432" \
+  DB_NAME="transactiondb" \
+  DB_USER="txuser" \
+  DB_PASSWORD="$TX_DB_PASSWORD"
 
-vault kv put secureflow/frontend AUTH_SERVICE_URL="http://auth-service:5001" TRANSACTION_SERVICE_URL="http://transaction-service:5002"
+vault kv put secureflow/frontend \
+  AUTH_SERVICE_URL="http://auth-service:5001" \
+  TRANSACTION_SERVICE_URL="http://transaction-service:5002" \
+  SESSION_SECRET="$SESSION_SECRET"
 
 echo "==> Creating Vault policies"
 
-cat >/tmp/auth-service-policy.hcl <<'EOF'
+umask 077
+
+cat > /tmp/auth-service-policy.hcl <<'EOF'
 path "secureflow/data/auth-service" {
-capabilities = ["read"]
+  capabilities = ["read"]
 }
 EOF
 
-cat >/tmp/transaction-service-policy.hcl <<'EOF'
+cat > /tmp/transaction-service-policy.hcl <<'EOF'
 path "secureflow/data/transaction-service" {
-capabilities = ["read"]
+  capabilities = ["read"]
 }
 EOF
 
-cat >/tmp/frontend-policy.hcl <<'EOF'
+cat > /tmp/frontend-policy.hcl <<'EOF'
 path "secureflow/data/frontend" {
-capabilities = ["read"]
+  capabilities = ["read"]
 }
 EOF
 
@@ -42,7 +83,11 @@ vault policy write auth-service-policy /tmp/auth-service-policy.hcl
 vault policy write transaction-service-policy /tmp/transaction-service-policy.hcl
 vault policy write frontend-policy /tmp/frontend-policy.hcl
 
-echo "==> Creating Kubernetes auth roles"
+rm -f /tmp/auth-service-policy.hcl \
+  /tmp/transaction-service-policy.hcl \
+  /tmp/frontend-policy.hcl
+
+echo "==> Creating or updating Kubernetes auth roles"
 
 vault write auth/kubernetes/role/auth-service \
   bound_service_account_names=auth-service-sa \
@@ -61,6 +106,7 @@ vault write auth/kubernetes/role/frontend \
   bound_service_account_namespaces=secureflow \
   policies=frontend-policy \
   ttl=1h
-echo "==> Bootstrap complete"
 
+echo "==> Vault bootstrap complete"
+echo "==> Configured roles:"
 vault list auth/kubernetes/role

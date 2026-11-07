@@ -1,3 +1,4 @@
+
 apiVersion: v1
 kind: ConfigMap
 
@@ -8,5 +9,3 @@ metadata:
 data:
   AUTH_SERVICE_URL: "http://auth-service:5001"
   TRANSACTION_SERVICE_URL: "http://transaction-service:5002"
-  AUTH_DB_PASSWORD: "authpass123"
-  TX_DB_PASSWORD: "txpass123"
