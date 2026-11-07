@@ -261,3 +261,146 @@ jobs:
           if-no-files-found: error
 
   
+  # ==========================================
+  # DIFFERENTIATED SECURITY GATE
+  # ==========================================
+  security-gate:
+    name: Differentiated Security Gate
+    runs-on: ubuntu-latest
+
+    needs:
+      - secret-scan
+      - sast-scan
+      - image-scan
+      - iac-scan
+
+    if: always()
+
+    steps:
+      - name: Download Gitleaks report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks
+
+      - name: Download SonarQube findings
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-findings
+          path: reports/sonar
+
+      - name: Download Trivy reports
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-image-reports
+          path: reports/trivy
+
+      - name: Download IaC reports
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: iac-reports
+          path: reports/iac
+
+      - name: Enforce differentiated security policy
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          # Fail closed when required reports are missing.
+          required=(
+            reports/gitleaks/gitleaks-report.json
+            reports/sonar/sonar-findings.json
+            reports/trivy/trivy-auth-service.json
+            reports/trivy/trivy-transaction-service.json
+            reports/trivy/trivy-frontend.json
+            reports/iac/trivy-k8s-report.json
+            reports/iac/checkov-report.json
+          )
+
+          for file in "${required[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              echo "::error::Required security report missing: $file"
+              fail=1
+            fi
+          done
+
+          if [[ "$fail" -ne 0 ]]; then
+            exit 1
+          fi
+
+          # Gitleaks: any secret blocks.
+          secrets=$(jq 'length' reports/gitleaks/gitleaks-report.json)
+
+          # Trivy: count CRITICAL vulnerabilities.
+          critical=0
+
+          for file in reports/trivy/*.json reports/iac/trivy-k8s-report.json; do
+            count=$(jq '[
+              .Results[]?.Vulnerabilities[]? |
+              select(.Severity == "CRITICAL")
+            ] | length' "$file")
+            critical=$((critical + count))
+          done
+
+          # Checkov: count CRITICAL IaC findings.
+          checkov_critical=$(jq '[
+            .results.failed_checks[]? |
+            select((.severity // "" | ascii_upcase) == "CRITICAL")
+          ] | length' reports/iac/checkov-report.json)
+
+          # SonarQube: MAJOR is treated as HIGH by our policy.
+          appsec_high=$(jq '[
+            .issues[]? |
+            select(
+              .severity == "MAJOR" or
+              .severity == "CRITICAL" or
+              .severity == "BLOCKER"
+            )
+          ] | length' reports/sonar/sonar-findings.json)
+
+          echo "========== SECURITY GATE SUMMARY =========="
+          echo "Gitleaks secrets: $secrets"
+          echo "Trivy CRITICAL: $critical"
+          echo "Checkov CRITICAL: $checkov_critical"
+          echo "AppSec HIGH/CRITICAL: $appsec_high"
+          echo "============================================"
+
+          # DevSecOps enforcement.
+          if (( secrets > 0 )); then
+            echo "::error::DevSecOps BLOCKED: exposed secrets detected."
+            fail=1
+          fi
+
+          if (( critical > 0 )); then
+            echo "::error::DevSecOps BLOCKED: CRITICAL vulnerabilities detected."
+            fail=1
+          fi
+
+          if (( checkov_critical > 0 )); then
+            echo "::error::DevSecOps BLOCKED: CRITICAL IaC findings detected."
+            fail=1
+          fi
+
+          # AppSec enforcement.
+          if (( appsec_high > 0 )); then
+            echo "::error::AppSec BLOCKED: HIGH/CRITICAL findings detected."
+            fail=1
+          fi
+
+          if (( fail > 0 )); then
+            echo "Security policy FAILED."
+            exit 1
+          fi
+
+          echo "Security policy PASSED."
