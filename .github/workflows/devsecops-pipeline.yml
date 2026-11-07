@@ -300,37 +300,50 @@ jobs:
 
       # Normalise Checkov output if the action created
       # a directory rather than a regular JSON file.
+      
       - name: Normalise Checkov report
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -d checkov-report.json ]]; then
-            echo "Checkov output is a directory. Locating JSON report."
+          REPORT="checkov-report.json"
+          NORMALISED="checkov-report-normalized.json"
 
-            candidate=$(find checkov-report.json \
-              -type f -name '*.json' -print -quit)
+          if [[ -d "$REPORT" ]]; then
+            echo "Checkov created a report directory."
+
+            candidate=$(find "$REPORT" \
+              -type f \
+              -name '*.json' \
+              -print -quit)
 
             if [[ -z "$candidate" ]]; then
-              echo "::error::No JSON report found inside Checkov output directory."
+              echo "::error::No JSON report found in Checkov directory."
               exit 1
             fi
 
-            cp "$candidate" checkov-report.json.tmp
-            rm -rf checkov-report.json
-            mv checkov-report.json.tmp checkov-report.json
-          fi
+            echo "Found report: $candidate"
 
-          if [[ ! -f checkov-report.json || ! -s checkov-report.json ]]; then
-            echo "::error::Checkov JSON report is missing or empty."
+            # Checkov may create root-owned files.
+            sudo cp "$candidate" "$NORMALISED"
+
+          elif [[ -f "$REPORT" ]]; then
+
+            cp "$REPORT" "$NORMALISED"
+
+          else
+            echo "::error::Checkov report is missing."
             exit 1
           fi
 
+          # Ensure the runner can read the report.
+          sudo chmod 644 "$NORMALISED"
+
+          # Validate JSON.
           jq -e '.results.failed_checks | type == "array"' \
-            checkov-report.json >/dev/null
+            "$NORMALISED" >/dev/null
 
-          echo "Checkov report validated successfully."
-
+          echo "Checkov report successfully normalised."
       - name: Upload IaC reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -338,7 +351,7 @@ jobs:
           name: iac-reports
           path: |
             trivy-k8s-report.json
-            checkov-report.json
+            checkov-report-normalized.json
           if-no-files-found: error
 
   # ==========================================
@@ -434,7 +447,7 @@ jobs:
             reports/trivy/trivy-transaction-service.json
             reports/trivy/trivy-frontend.json
             reports/iac/trivy-k8s-report.json
-            reports/iac/checkov-report.json
+            reports/iac/checkov-report-normalized.json
           )
 
           # Fail closed if any report is missing,
@@ -479,7 +492,7 @@ jobs:
             reports/iac/trivy-k8s-report.json >/dev/null
 
           jq -e '.results.failed_checks | type == "array"' \
-            reports/iac/checkov-report.json >/dev/null
+            reports/iac/checkov-report-normalized.json >/dev/null
 
           # --------------------------------------
           # GITLEAKS POLICY
@@ -525,7 +538,7 @@ jobs:
 
           checkov_failed=$(jq '
             .results.failed_checks | length
-          ' reports/iac/checkov-report.json)
+          ' reports/iac/checkov-report-normalized.json)
 
           checkov_critical=$(jq '[
             .results.failed_checks[]? |
