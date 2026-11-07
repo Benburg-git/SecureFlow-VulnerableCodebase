@@ -545,7 +545,7 @@ jobs:
             select(
               ((.severity // "") | ascii_upcase) == "CRITICAL"
             )
-          ] | length' reports/iac/checkov-report.json)
+          ] | length' reports/iac/checkov-report-normalized.json)
 
           # --------------------------------------
           # SONARQUBE APPSEC FINDINGS
@@ -630,3 +630,4 @@ jobs:
           echo ""
           echo "SECURITY GATE PASSED."
           echo "All configured security policies satisfied."
+
