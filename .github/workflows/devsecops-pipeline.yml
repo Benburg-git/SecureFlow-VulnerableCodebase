@@ -1,3 +1,4 @@
+```yaml
 name: DevSecOps Pipeline
 
 on:
@@ -14,23 +15,23 @@ permissions:
 
 jobs:
 
-  # =========================
-  # HELLO WORLD
-  # =========================
+  # ==========================================
+  # 1. HELLO WORLD
+  # ==========================================
   hello-world:
+    name: Hello World
     runs-on: ubuntu-latest
+
     steps:
       - name: Hello World
-        run: echo "Hello World from the DevSecOps pipeline!"
+        run: echo "Hello World from the SecureFlow DevSecOps pipeline!"
 
-  # =========================
-  # GITLEAKS SECRET SCAN
-  # =========================
+  # ==========================================
+  # 2. GITLEAKS SECRET SCAN
+  # ==========================================
   secret-scan:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout repository (full history)
@@ -39,17 +40,28 @@ jobs:
           fetch-depth: 0
 
       - name: Install Gitleaks
+        shell: bash
         run: |
-          GITLEAKS_VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep '"tag_name"' | cut -d '"' -f4 | sed 's/v//')
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          set -euo pipefail
+
+          GITLEAKS_VERSION="8.28.0"
+
+          curl --fail --location --show-error \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output gitleaks.tar.gz
+
+          tar -tzf gitleaks.tar.gz >/dev/null
           tar -xzf gitleaks.tar.gz gitleaks
-          sudo mv gitleaks /usr/local/bin/gitleaks
+
+          sudo install gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
-      - name: Run Gitleaks (report only)
+      - name: Run Gitleaks
+        shell: bash
         run: |
-          gitleaks detect \
-            --source . \
+          set -euo pipefail
+
+          gitleaks git . \
             --log-opts="--all" \
             --config .gitleaks.toml \
             --report-format json \
@@ -57,16 +69,27 @@ jobs:
             --redact \
             --exit-code 0
 
+          test -s gitleaks-report.json
+          jq -e 'type == "array"' gitleaks-report.json >/dev/null
+
+          secrets=$(jq 'length' gitleaks-report.json)
+          echo "Gitleaks findings: $secrets"
+
+          if (( secrets > 0 )); then
+            echo "::warning::Gitleaks found $secrets historical or current findings."
+          fi
+
       - name: Upload Gitleaks report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-report
           path: gitleaks-report.json
+          if-no-files-found: error
 
-  # =========================
-  # SONARQUBE / SAST
-  # =========================
+  # ==========================================
+  # 3. SONARQUBE CLOUD / SAST
+  # ==========================================
   sast-scan:
     name: SonarQube Cloud Scan
     runs-on: ubuntu-latest
@@ -77,7 +100,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run SonarQube scan
+      - name: Run SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@v7
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -91,28 +114,39 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PROJECT_KEY: Benburg-git_SecureFlow-VulnerableCodebase
+        shell: bash
         run: |
-          curl -sS \
+          set -euo pipefail
+
+          curl --fail --silent --show-error \
+            --retry 3 \
             -u "${SONAR_TOKEN}:" \
-            "https://sonarcloud.io/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&statuses=OPEN,CONFIRMED,REOPENED&ps=500" \
+            --get \
+            --data-urlencode "componentKeys=${SONAR_PROJECT_KEY}" \
+            --data-urlencode "statuses=OPEN,CONFIRMED,REOPENED" \
+            --data-urlencode "ps=500" \
+            "https://sonarcloud.io/api/issues/search" \
             -o sonar-issues.json
+
+          jq -e '.issues | type == "array"' sonar-issues.json >/dev/null
 
           jq --arg project "$SONAR_PROJECT_KEY" '{
             project: $project,
             issues: [
-              .issues[] |
-              {
-                key: .key,
-                rule: .rule,
-                severity: .severity,
-                type: .type,
-                message: .message,
-                component: .component,
-                line: .line,
-                status: .status
+              .issues[] | {
+                key,
+                rule,
+                severity,
+                type,
+                message,
+                component,
+                line,
+                status
               }
             ]
           }' sonar-issues.json > sonar-findings.json
+
+          jq -e '.issues | type == "array"' sonar-findings.json >/dev/null
 
       - name: Upload SonarQube findings
         if: always()
@@ -120,35 +154,49 @@ jobs:
         with:
           name: sonar-findings
           path: sonar-findings.json
+          if-no-files-found: error
 
       - name: Summarize SonarQube findings
+        shell: bash
         run: |
-          total=$(jq '.issues | length' sonar-findings.json)
-          high=$(jq '[.issues[] | select(.severity == "MAJOR" or .severity == "CRITICAL" or .severity == "BLOCKER")] | length' sonar-findings.json)
-          echo "Total SonarQube findings: $total"
-          echo "High-priority AppSec findings: $high"
-          echo "SonarQube findings are non-blocking and will be evaluated by the security gate."
+          set -euo pipefail
 
-  # =========================
-  # TRIVY IMAGE SCAN
-  # =========================
+          total=$(jq '.issues | length' sonar-findings.json)
+
+          high=$(jq '[
+            .issues[] |
+            select(
+              .severity == "MAJOR" or
+              .severity == "CRITICAL" or
+              .severity == "BLOCKER"
+            )
+          ] | length' sonar-findings.json)
+
+          echo "Total SonarQube findings: $total"
+          echo "HIGH/CRITICAL AppSec findings: $high"
+
+  # ==========================================
+  # 4. TRIVY CONTAINER IMAGE SCAN
+  # ==========================================
   image-scan:
     name: Trivy Image Scan
     runs-on: ubuntu-latest
-    if: always()
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Build auth-service image
-        run: docker build -t auth-service:scan ./services/auth-service
+        run: |
+          docker build -t auth-service:scan ./services/auth-service
 
       - name: Build transaction-service image
-        run: docker build -t transaction-service:scan ./services/transaction-service
+        run: |
+          docker build -t transaction-service:scan ./services/transaction-service
 
       - name: Build frontend image
-        run: docker build -t frontend:scan ./services/frontend
+        run: |
+          docker build -t frontend:scan ./services/frontend
 
       - name: Scan auth-service image
         uses: aquasecurity/trivy-action@v0.36.0
@@ -180,26 +228,44 @@ jobs:
           scanners: vuln
           exit-code: '0'
 
+      - name: Validate Trivy image reports
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for file in \
+            trivy-auth-service.json \
+            trivy-transaction-service.json \
+            trivy-frontend.json
+          do
+            test -s "$file"
+            jq -e '.Results | type == "array"' "$file" >/dev/null
+            echo "Validated: $file"
+          done
+
       - name: Upload Trivy reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-reports
-          path: trivy-*.json
+          path: |
+            trivy-auth-service.json
+            trivy-transaction-service.json
+            trivy-frontend.json
+          if-no-files-found: error
 
-  # =========================
-  # INFRASTRUCTURE AS CODE SCAN
-  # =========================
+  # ==========================================
+  # 5. INFRASTRUCTURE AS CODE SCAN
+  # ==========================================
   iac-scan:
     name: Infrastructure as Code Scan
     runs-on: ubuntu-latest
-    if: always()
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Trivy config scan - Kubernetes
+      - name: Trivy Kubernetes configuration scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
@@ -208,6 +274,14 @@ jobs:
           output: trivy-k8s-report.json
           severity: CRITICAL,HIGH
           exit-code: '0'
+
+      - name: Validate Trivy Kubernetes report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -s trivy-k8s-report.json
+          jq -e '.Results | type == "array"' trivy-k8s-report.json >/dev/null
 
       - name: Checkov Terraform scan
         uses: bridgecrewio/checkov-action@master
@@ -218,6 +292,39 @@ jobs:
           output_file_path: checkov-report.json
           soft_fail: true
 
+      - name: Normalise Checkov report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPORT="checkov-report.json"
+          NORMALISED="checkov-report-normalized.json"
+
+          if [[ -d "$REPORT" ]]; then
+            candidate=$(find "$REPORT" -type f -name '*.json' -print -quit)
+
+            if [[ -z "$candidate" ]]; then
+              echo "::error::No JSON report found in Checkov directory."
+              exit 1
+            fi
+
+            sudo cp "$candidate" "$NORMALISED"
+
+          elif [[ -f "$REPORT" ]]; then
+            cp "$REPORT" "$NORMALISED"
+
+          else
+            echo "::error::Checkov report is missing."
+            exit 1
+          fi
+
+          sudo chmod 644 "$NORMALISED"
+
+          jq -e '.results.failed_checks | type == "array"' \
+            "$NORMALISED" >/dev/null
+
+          echo "Checkov report successfully normalised."
+
       - name: Upload IaC reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -225,15 +332,15 @@ jobs:
           name: iac-reports
           path: |
             trivy-k8s-report.json
-            checkov-report.json
+            checkov-report-normalized.json
+          if-no-files-found: error
 
-  # =========================
-  # DIFFERENTIATED SECURITY GATE
-  # =========================
+  # ==========================================
+  # 6. DIFFERENTIATED SECURITY GATE
+  # ==========================================
   security-gate:
-    name: Security Gate
+    name: Differentiated Security Gate
     runs-on: ubuntu-latest
-    if: always()
 
     needs:
       - secret-scan
@@ -241,122 +348,276 @@ jobs:
       - image-scan
       - iac-scan
 
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+    if: always()
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      # ----------------------------------------
+      # DOWNLOAD SCAN REPORTS
+      # ----------------------------------------
 
-      - name: Download all security artifacts
-        uses: actions/download-artifact@v5
+      - name: Download Gitleaks report
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
-          path: security-artifacts
+          name: gitleaks-report
+          path: reports/gitleaks
 
-      - name: Display downloaded reports
+      - name: Download SonarQube findings
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-findings
+          path: reports/sonar
+
+      - name: Download Trivy image reports
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: trivy-image-reports
+          path: reports/trivy
+
+      - name: Download IaC reports
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: iac-reports
+          path: reports/iac
+
+      # ----------------------------------------
+      # DIAGNOSE REPORT STRUCTURE
+      # ----------------------------------------
+
+      - name: Inspect downloaded security reports
+        if: always()
+        shell: bash
         run: |
-          find security-artifacts -maxdepth 3 -type f -print
+          echo "========== REPORT STRUCTURE =========="
 
-      - name: Run differentiated security gate
-        id: security_gate
+          if [[ -d reports ]]; then
+            find reports -maxdepth 5 -print
+          else
+            echo "Reports directory does not exist."
+          fi
+
+          echo "========== JSON FILES =========="
+          find reports -type f -name '*.json' -print 2>/dev/null || true
+
+      # ----------------------------------------
+      # VERIFY SCAN JOB RESULTS
+      # ----------------------------------------
+
+      - name: Verify security scan job results
+        if: always()
+        shell: bash
+        env:
+          SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
+          SAST_SCAN_RESULT: ${{ needs.sast-scan.result }}
+          IMAGE_SCAN_RESULT: ${{ needs.image-scan.result }}
+          IAC_SCAN_RESULT: ${{ needs.iac-scan.result }}
+        run: |
+          set -euo pipefail
+
+          echo "Gitleaks: $SECRET_SCAN_RESULT"
+          echo "SAST: $SAST_SCAN_RESULT"
+          echo "Image scan: $IMAGE_SCAN_RESULT"
+          echo "IaC scan: $IAC_SCAN_RESULT"
+
+          if [[ "$SECRET_SCAN_RESULT" != "success" ||
+                "$SAST_SCAN_RESULT" != "success" ||
+                "$IMAGE_SCAN_RESULT" != "success" ||
+                "$IAC_SCAN_RESULT" != "success" ]]; then
+            echo "::error::One or more security scanning jobs failed."
+            exit 1
+          fi
+
+      # ----------------------------------------
+      # ENFORCE DIFFERENTIATED SECURITY POLICY
+      # ----------------------------------------
+
+      - name: Enforce differentiated security policy
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
 
-          DEVSECOPS_BLOCKERS=0
-          APPSEC_FINDINGS=0
+          fail=0
 
-          echo "Evaluating DevSecOps-owned findings..."
+          echo "========== VALIDATING SECURITY REPORTS =========="
 
-          GITLEAKS_REPORT=$(find security-artifacts -name "gitleaks-report.json" | head -1 || true)
-          if [ -n "${GITLEAKS_REPORT}" ]; then
-            GITLEAKS_COUNT=$(jq 'length' "$GITLEAKS_REPORT")
-            echo "Gitleaks findings: $GITLEAKS_COUNT"
-            if [ "$GITLEAKS_COUNT" -gt 0 ]; then
-              DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + GITLEAKS_COUNT))
+          required=(
+            reports/gitleaks/gitleaks-report.json
+            reports/sonar/sonar-findings.json
+            reports/trivy/trivy-auth-service.json
+            reports/trivy/trivy-transaction-service.json
+            reports/trivy/trivy-frontend.json
+            reports/iac/trivy-k8s-report.json
+            reports/iac/checkov-report-normalized.json
+          )
+
+          for file in "${required[@]}"; do
+            if [[ ! -f "$file" || ! -s "$file" ]]; then
+              echo "::error::Missing or invalid report: $file"
+              exit 1
             fi
+
+            if ! jq empty "$file" >/dev/null 2>&1; then
+              echo "::error::Invalid JSON report: $file"
+              exit 1
+            fi
+
+            echo "VALID: $file"
+          done
+
+          echo "All required reports are available."
+
+          # --------------------------------------
+          # VALIDATE REPORT SCHEMAS
+          # --------------------------------------
+
+          jq -e 'type == "array"' \
+            reports/gitleaks/gitleaks-report.json >/dev/null
+
+          jq -e '.issues | type == "array"' \
+            reports/sonar/sonar-findings.json >/dev/null
+
+          for file in \
+            reports/trivy/trivy-auth-service.json \
+            reports/trivy/trivy-transaction-service.json \
+            reports/trivy/trivy-frontend.json \
+            reports/iac/trivy-k8s-report.json
+          do
+            jq -e '.Results | type == "array"' "$file" >/dev/null
+          done
+
+          jq -e '.results.failed_checks | type == "array"' \
+            reports/iac/checkov-report-normalized.json >/dev/null
+
+          # --------------------------------------
+          # GITLEAKS POLICY
+          # --------------------------------------
+
+          secrets=$(jq 'length' reports/gitleaks/gitleaks-report.json)
+
+          # --------------------------------------
+          # TRIVY CONTAINER VULNERABILITIES
+          # --------------------------------------
+
+          critical_vulns=0
+
+          for file in \
+            reports/trivy/trivy-auth-service.json \
+            reports/trivy/trivy-transaction-service.json \
+            reports/trivy/trivy-frontend.json
+          do
+            count=$(jq '[
+              .Results[]?.Vulnerabilities[]? |
+              select(.Severity == "CRITICAL")
+            ] | length' "$file")
+
+            critical_vulns=$((critical_vulns + count))
+          done
+
+          # --------------------------------------
+          # TRIVY KUBERNETES MISCONFIGURATIONS
+          # --------------------------------------
+
+          critical_misconfigs=$(jq '[
+            .Results[]?.Misconfigurations[]? |
+            select(.Severity == "CRITICAL")
+          ] | length' reports/iac/trivy-k8s-report.json)
+
+          # --------------------------------------
+          # CHECKOV TERRAFORM FINDINGS
+          # --------------------------------------
+
+          checkov_failed=$(jq '.results.failed_checks | length' \
+            reports/iac/checkov-report-normalized.json)
+
+          checkov_critical=$(jq '[
+            .results.failed_checks[]? |
+            select(
+              ((.severity // "") | ascii_upcase) == "CRITICAL"
+            )
+          ] | length' reports/iac/checkov-report-normalized.json)
+
+          # --------------------------------------
+          # SONARQUBE APPSEC FINDINGS
+          # --------------------------------------
+
+          appsec_high=$(jq '[
+            .issues[] |
+            select(
+              .severity == "MAJOR" or
+              .severity == "CRITICAL" or
+              .severity == "BLOCKER"
+            )
+          ] | length' reports/sonar/sonar-findings.json)
+
+          # --------------------------------------
+          # SECURITY GATE SUMMARY
+          # --------------------------------------
+
+          echo ""
+          echo "============================================"
+          echo "       SECUREFLOW SECURITY GATE"
+          echo "============================================"
+
+          echo "Gitleaks exposed secrets: $secrets"
+          echo "Trivy CRITICAL vulnerabilities: $critical_vulns"
+          echo "Trivy CRITICAL Kubernetes misconfigurations: $critical_misconfigs"
+          echo "Checkov failed checks: $checkov_failed"
+          echo "Checkov CRITICAL findings: $checkov_critical"
+          echo "AppSec HIGH/CRITICAL findings: $appsec_high"
+
+          echo "============================================"
+
+          # --------------------------------------
+          # DEVSECOPS ENFORCEMENT
+          # --------------------------------------
+
+          if (( secrets > 0 )); then
+            echo "::error::DEVSECOPS BLOCKED: Exposed secrets detected."
+            fail=1
           fi
 
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$f")
-            echo "$f CRITICAL findings: $CRITICAL_COUNT"
-            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + CRITICAL_COUNT))
-          done < <(find security-artifacts -name "trivy-*.json" ! -name "trivy-k8s-report.json")
-
-          K8S_REPORT=$(find security-artifacts -name "trivy-k8s-report.json" | head -1 || true)
-          if [ -n "${K8S_REPORT}" ]; then
-            K8S_CRITICAL=$(jq '[.Results[]?.Misconfigurations[]? | select(.Severity=="CRITICAL")] | length' "$K8S_REPORT")
-            echo "K8s CRITICAL findings: $K8S_CRITICAL"
-            DEVSECOPS_BLOCKERS=$((DEVSECOPS_BLOCKERS + K8S_CRITICAL))
+          if (( critical_vulns > 0 )); then
+            echo "::error::DEVSECOPS BLOCKED: CRITICAL container vulnerabilities detected."
+            fail=1
           fi
 
-          SONAR_REPORT=$(find security-artifacts -name "sonar-findings.json" | head -1 || true)
-          if [ -n "${SONAR_REPORT}" ]; then
-            APPSEC_FINDINGS=$(jq '[.issues[] | select(.severity=="MAJOR" or .severity=="CRITICAL" or .severity=="BLOCKER")] | length' "$SONAR_REPORT")
-            echo "AppSec findings: $APPSEC_FINDINGS"
+          if (( critical_misconfigs > 0 )); then
+            echo "::error::DEVSECOPS BLOCKED: CRITICAL Kubernetes misconfigurations detected."
+            fail=1
           fi
 
-          echo "DEVSECOPS_BLOCKERS=$DEVSECOPS_BLOCKERS" >> "$GITHUB_ENV"
-          echo "APPSEC_FINDINGS=$APPSEC_FINDINGS" >> "$GITHUB_ENV"
-
-          if [ "$DEVSECOPS_BLOCKERS" -gt 0 ]; then
-            echo "SECURITY_GATE_RESULT=BLOCKED" >> "$GITHUB_ENV"
-          else
-            echo "SECURITY_GATE_RESULT=PASSED" >> "$GITHUB_ENV"
+          if (( checkov_critical > 0 )); then
+            echo "::error::DEVSECOPS BLOCKED: CRITICAL Terraform findings detected."
+            fail=1
           fi
 
-      - name: Generate PR security summary
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          cat > security-gate-summary.md <<EOF
-          ## 🛡️ SecureFlow Security Gate
+          # --------------------------------------
+          # APPSEC ENFORCEMENT (SOFT-FAIL)
+          # --------------------------------------
 
-          ### DevSecOps-owned findings
+          if (( appsec_high > 0 )); then
+            echo "::warning::APPSEC WARNING: $appsec_high HIGH/CRITICAL findings. Non-blocking; raise an AppSec intake ticket."
+          fi
 
-          **Blocking CRITICAL findings:** ${DEVSECOPS_BLOCKERS}
+          # --------------------------------------
+          # FINAL DECISION
+          # --------------------------------------
 
-          - CRITICAL DevSecOps finding → ⛔ BLOCKING
-          - HIGH / MEDIUM / LOW → review but non-blocking unless explicitly escalated
-
-          ### AppSec-owned findings
-
-          **High-priority AppSec findings:** ${APPSEC_FINDINGS}
-
-          AppSec findings are **non-blocking** and require handoff for triage.
-
-          AppSec intake:
-          \`docs/security-gate-policy.md#appsec-intake-template\`
-
-          ### Final Gate Decision
-
-          **${SECURITY_GATE_RESULT}**
-          EOF
-
-      - name: Post security gate PR comment
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --body-file security-gate-summary.md
-
-      - name: Upload security gate summary
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-gate-summary
-          path: security-gate-summary.md
-
-      - name: Enforce final gate decision
-        run: |
-          if [ "${SECURITY_GATE_RESULT}" = "BLOCKED" ]; then
-            echo "::error::Security Gate FAILED - blocking DevSecOps findings are present."
+          if (( fail > 0 )); then
+            echo ""
+            echo "SECURITY GATE FAILED."
+            echo "Review the security findings before merging."
             exit 1
           fi
 
-          echo "Security Gate PASSED"
+          echo ""
+          echo "SECURITY GATE PASSED."
+          echo "All configured security policies satisfied."

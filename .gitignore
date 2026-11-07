@@ -1,0 +1,39 @@
+﻿# Terraform generated files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.tfvars
+*.tfvars.json
+*.pem
+*.key
+
+# Python virtual environments and caches
+venv/
+.venv/
+venvvenv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated security scan reports
+gitleaks-report.json
+trivy-report.json
+checkov-report.json
+tfsec-report.json
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python virtual environments
+venv/

@@ -1,0 +1,21 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDisallowRoot
+
+metadata:
+  name: secureflow-disallow-root
+
+spec:
+  enforcementAction: dryrun
+
+  match:
+    kinds:
+      - apiGroups:
+          - ""
+          - apps
+
+        kinds:
+          - Pod
+          - Deployment
+
+    namespaces:
+      - secureflow
